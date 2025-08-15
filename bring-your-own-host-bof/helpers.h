@@ -75,6 +75,7 @@ extern "C" {
 
     typedef struct _Type                        IType;
     typedef struct _MethodInfo                  IMethodInfo;
+    typedef struct _PropertyInfo                IPropertyInfo;
     typedef struct _Assembly                    IAssembly;
 
 
@@ -461,6 +462,16 @@ typedef struct _AppDomain                   IAppDomain;
 #define CLRCreateInstance MSCOREE$CLRCreateInstance
 
     // KERNEL32
+    
+    // used only for System.Exit.Free patch
+    WINBASEAPI BOOL WINAPI KERNEL32$VirtualProtect(
+        LPVOID lpAddress,
+        SIZE_T dwSize,
+        DWORD  flNewProtect,
+        PDWORD lpflOldProtect
+    );
+#define VirtualProtect KERNEL32$VirtualProtect
+
     WINBASEAPI HGLOBAL WINAPI KERNEL32$GlobalAlloc(UINT uFlags, SIZE_T dwBytes);
 #define GlobalAlloc KERNEL32$GlobalAlloc
     WINBASEAPI HGLOBAL WINAPI KERNEL32$GlobalFree(HGLOBAL hMem);
@@ -1090,7 +1101,12 @@ typedef struct _AppDomain                   IAppDomain;
         DUMMY_METHOD(IsAssignableFrom);
         DUMMY_METHOD(GetInterfaceMap);
         DUMMY_METHOD(GetMethod);
-        DUMMY_METHOD(GetMethod_2);
+        //DUMMY_METHOD(GetMethod_2);
+        HRESULT(STDMETHODCALLTYPE* GetMethod_2)(
+            IType* This,
+            /*[in]*/ BSTR name,
+            /*[in]*/ BindingFlags bindingAttr,
+            /*[out,retval]*/ struct _MethodInfo** pRetVal);
         //DUMMY_METHOD(GetMethods);
         HRESULT(STDMETHODCALLTYPE* GetMethods)(
             IType* This,
@@ -1098,7 +1114,12 @@ typedef struct _AppDomain                   IAppDomain;
             /*[out,retval]*/ SAFEARRAY** pRetVal);
         DUMMY_METHOD(GetField);
         DUMMY_METHOD(GetFields);
-        DUMMY_METHOD(GetProperty);
+        //DUMMY_METHOD(GetProperty);
+        HRESULT(STDMETHODCALLTYPE* GetProperty)(
+            IType* This,
+            /*[in]*/ BSTR name,
+            /*[in]*/ BindingFlags bindingAttr,
+            /*[out,retval]*/ struct _PropertyInfo** pRetVal);
         DUMMY_METHOD(GetProperty_2);
         DUMMY_METHOD(GetProperties);
         DUMMY_METHOD(GetMember_2);
@@ -1520,6 +1541,68 @@ typedef struct _AppDomain                   IAppDomain;
     typedef struct _MethodInfo {
         MethodInfoVtbl* lpVtbl;
     } MethodInfo;
+
+#undef DUMMY_METHOD
+#define DUMMY_METHOD(x) HRESULT ( STDMETHODCALLTYPE *dummy_##x )(IPropertyInfo *This)
+    typedef struct _PropertyInfoVtbl
+    {
+        HRESULT(STDMETHODCALLTYPE* QueryInterface)(
+            IPropertyInfo* This,
+            /* [in] */ REFIID riid,
+            /* [iid_is][out] */
+            __RPC__deref_out  void** ppvObject);
+
+        ULONG(STDMETHODCALLTYPE* AddRef)(
+            IPropertyInfo* This);
+
+        ULONG(STDMETHODCALLTYPE* Release)(
+            IPropertyInfo* This);
+
+        //
+        // Raw methods provided by interface
+        //
+        DUMMY_METHOD(GetTypeInfoCount);
+        DUMMY_METHOD(GetTypeInfo);
+        DUMMY_METHOD(GetIDsOfNames);
+        DUMMY_METHOD(Invoke);
+        DUMMY_METHOD(get_ToString);
+        DUMMY_METHOD(Equals);
+        DUMMY_METHOD(GetHashCode);
+        DUMMY_METHOD(GetType);
+        DUMMY_METHOD(get_MemberType);
+        DUMMY_METHOD(get_name);
+        DUMMY_METHOD(get_DeclaringType);
+        DUMMY_METHOD(get_ReflectedType);
+        DUMMY_METHOD(GetCustomAttributes);
+        DUMMY_METHOD(GetCustomAttributes_2);
+        DUMMY_METHOD(IsDefined);
+        DUMMY_METHOD(get_PropertyType);
+        HRESULT(STDMETHODCALLTYPE* GetValue) (
+            _PropertyInfo* This,
+            /*[in]*/ VARIANT obj,
+            /*[in]*/ SAFEARRAY* index,
+            /*[out,retval]*/ VARIANT* pRetVal);
+        DUMMY_METHOD(GetValue_2);
+        DUMMY_METHOD(SetValue);
+        DUMMY_METHOD(SetValue_2);
+        DUMMY_METHOD(GetAccessors);
+        DUMMY_METHOD(GetGetMethod);
+        DUMMY_METHOD(GetSetMethod);
+        DUMMY_METHOD(GetIndexParameters);
+        DUMMY_METHOD(get_Attributes);
+        DUMMY_METHOD(get_CanRead);
+        DUMMY_METHOD(get_CanWrite);
+        DUMMY_METHOD(GetAccessors_2);
+        DUMMY_METHOD(GetGetMethod_2);
+        DUMMY_METHOD(GetSetMethod_2);
+        DUMMY_METHOD(get_IsSpecialName);
+    } PropertyInfoVtbl;
+
+
+    typedef struct _PropertyInfo {
+        PropertyInfoVtbl* lpVtbl;
+    } PropertyInfo;
+
 
     typedef struct ICorConfigurationVtbl
     {
